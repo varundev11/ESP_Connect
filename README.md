@@ -73,12 +73,12 @@ This allows users to provision the device directly from a Chrome browser on PC o
 
 ## ☁️ Secure OTA Protocol & Schemas
 
-Once connected to Wi-Fi, the device checks for updates against a remote server (`https://ota.hellum.dev/check`). 
+Once connected to Wi-Fi, the device checks for updates against a remote server (`https://ota.hellum.dev/smart_switch/check`). 
 
 ### 1. Update Check Request
 The ESP32 makes an HTTP `GET` request, passing its MAC address and current firmware version as URL parameters.
 ```http
-GET /check?mac=AA:BB:CC:DD:EE:FF&ver=1.0.0 HTTP/1.1
+GET /smart_switch/check?mac=AA:BB:CC:DD:EE:FF&ver=1.0.0 HTTP/1.1
 Host: ota.hellum.dev
 ```
 

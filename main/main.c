@@ -21,7 +21,7 @@ static const char *TAG = "ESP_CORE";
 
 #define BUTTON_GPIO             GPIO_NUM_32  // Rarely conflicts, input/output capable
 #define FIRMWARE_VERSION        "1.0.0"
-#define OTA_CHECK_URL           "https://ota.hellum.dev/check"
+#define OTA_CHECK_URL           "https://ota.hellum.dev/smart_switch/check"
 #define PROV_DEVICE_NAME_PREFIX "PROV_"
 #define PROV_POP_NAMESPACE      "prov"
 #define PROV_POP_KEY            "pop"
@@ -238,58 +238,99 @@ void start_ble_provisioning(void) {
 void check_ota_task(void *pvParameter) {
     uint8_t mac[6];
     esp_wifi_get_mac(WIFI_IF_STA, mac);
+
     char check_url[200];
-    snprintf(check_url, sizeof(check_url), "%s?mac=%02x:%02x:%02x:%02x:%02x:%02x&ver=%s",
-             OTA_CHECK_URL, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], FIRMWARE_VERSION);
+    snprintf(check_url, sizeof(check_url),
+             "%s?mac=%02x:%02x:%02x:%02x:%02x:%02x&ver=%s",
+             OTA_CHECK_URL,
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+             FIRMWARE_VERSION);
 
     esp_http_client_config_t config = {
         .url = check_url,
         .cert_pem = (const char *)server_cert_pem_start,
         .method = HTTP_METHOD_GET,
+        .timeout_ms = 10000,
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        ESP_LOGE(TAG, "Failed to init HTTP client");
+        vTaskDelete(NULL);
+        return;
+    }
+
     esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "HTTP open failed: %s", esp_err_to_name(err));
+        esp_http_client_cleanup(client);
+        vTaskDelete(NULL);
+        return;
+    }
 
-    if (err == ESP_OK) {
-        esp_http_client_fetch_headers(client);
-        int content_length = esp_http_client_get_content_length(client);
-        char *buffer = malloc(content_length + 1);
-        int read_len = esp_http_client_read(client, buffer, content_length);
-        buffer[read_len] = '\0';
+    esp_http_client_fetch_headers(client);
 
-        cJSON *json = cJSON_Parse(buffer);
+    #define OTA_CHECK_BUF_SIZE 1024
+    static char response_buf[OTA_CHECK_BUF_SIZE];
+    int total_read = 0;
+    int read_len = 0;
+
+    while (total_read < (OTA_CHECK_BUF_SIZE - 1)) {
+        read_len = esp_http_client_read(
+            client,
+            response_buf + total_read,
+            OTA_CHECK_BUF_SIZE - 1 - total_read
+        );
+        if (read_len <= 0) {
+            break;
+        }
+        total_read += read_len;
+    }
+    response_buf[total_read] = '\0';
+
+    int status = esp_http_client_get_status_code(client);
+    ESP_LOGI(TAG, "OTA check HTTP %d, body: %s", status, response_buf);
+
+    if (status == 200 && total_read > 0) {
+        cJSON *json = cJSON_Parse(response_buf);
         if (json != NULL) {
             cJSON *update_av = cJSON_GetObjectItem(json, "update_available");
             if (cJSON_IsTrue(update_av)) {
                 cJSON *fw_url = cJSON_GetObjectItem(json, "firmware_url");
-                ESP_LOGI(TAG, "Update available! Downloading from %s", fw_url->valuestring);
+                if (fw_url && fw_url->valuestring) {
+                    ESP_LOGI(TAG, "Update available! Downloading from %s", fw_url->valuestring);
 
-                esp_http_client_config_t ota_client_config = {
-                    .url = fw_url->valuestring,
-                    .cert_pem = (const char *)server_cert_pem_start,
-                    .keep_alive_enable = true,
-                };
+                    esp_http_client_config_t ota_client_config = {
+                        .url = fw_url->valuestring,
+                        .cert_pem = (const char *)server_cert_pem_start,
+                        .keep_alive_enable = true,
+                        .timeout_ms = 60000,
+                    };
+                    esp_https_ota_config_t ota_config = {
+                        .http_config = &ota_client_config,
+                    };
 
-                esp_https_ota_config_t ota_config = {
-                    .http_config = &ota_client_config,
-                };
-
-                ESP_LOGI(TAG, "Starting OTA stream directly to inactive partition...");
-                esp_err_t ret = esp_https_ota(&ota_config);
-                if (ret == ESP_OK) {
-                    ESP_LOGI(TAG, "OTA Success. Rebooting into new firmware...");
-                    esp_restart();
-                } else {
-                    ESP_LOGE(TAG, "OTA Failed: %s", esp_err_to_name(ret));
+                    ESP_LOGI(TAG, "Starting OTA...");
+                    esp_err_t ota_ret = esp_https_ota(&ota_config);
+                    if (ota_ret == ESP_OK) {
+                        ESP_LOGI(TAG, "OTA success. Rebooting...");
+                        esp_http_client_cleanup(client);
+                        esp_restart();
+                    } else {
+                        ESP_LOGE(TAG, "OTA failed: %s", esp_err_to_name(ota_ret));
+                    }
                 }
             } else {
                 ESP_LOGI(TAG, "Firmware is up to date.");
             }
             cJSON_Delete(json);
+        } else {
+            ESP_LOGE(TAG, "Failed to parse JSON response");
         }
-        free(buffer);
+    } else {
+        ESP_LOGE(TAG, "Bad HTTP response: status=%d bytes_read=%d", status, total_read);
     }
+
     esp_http_client_cleanup(client);
     vTaskDelete(NULL);
 }
