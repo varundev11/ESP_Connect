@@ -52,8 +52,9 @@ On the very first boot (or after 5 button presses), the device broadcasts a BLE 
 ### Technical Details
 * **Transport:** BLE (Bluetooth Low Energy) via NimBLE stack.
 * **Security Protocol:** `Security 1` (Requires Proof of Possession - PoP).
-* **Device Name:** `PROV_XXXX` (Where XXXX are the last 4 characters of the MAC address).
-* **Proof of Possession (PoP):** `HELLUM123` (In production, this should be unique per device, often printed as a QR code on the casing).
+* **Provisioning Service UUID:** `55cc035e-fb27-4f80-be02-3c60828b7451`
+* **Device Name:** `PROV_XXXXXX` (Last 3 bytes of MAC in hex).
+* **Proof of Possession (PoP):** Unique per device, persisted in NVS under namespace `prov` and key `pop`.
 
 ### Connecting to the Device
 
@@ -61,7 +62,7 @@ On the very first boot (or after 5 button presses), the device broadcasts a BLE 
 1. Download **Espressif Provisioning** on [iOS (App Store)](https://apps.apple.com/us/app/espressif-provisioning/id1474012698) or [Android (Google Play)](https://play.google.com/store/apps/details?id=com.espressif.provble).
 2. Open the app, select **Provision Device**, and choose **BLE**.
 3. Select `PROV_XXXX`.
-4. Enter the PoP PIN (`HELLUM123`).
+4. Enter the PoP PIN for that specific device.
 5. Select your home 2.4GHz Wi-Fi and enter the password.
 
 **Option 2: Custom Web Frontend (Web Bluetooth)**
@@ -150,6 +151,6 @@ This project utilizes a **2-App Partition Scheme** (`ota_0` and `ota_1`).
 ## 🔒 Security Considerations for Production
 
 Before moving this to mass production, implement the following:
-1. **Unique PoP per Device:** Do not use `HELLUM123` globally. Generate a random PoP based on hardware encryption or flash it uniquely per device during manufacturing.
+1. **PoP Manufacturing Workflow:** During manufacturing, read/write each device PoP from NVS (`prov/pop`), print it as QR/text on the device label, and keep the backend inventory mapping for support.
 2. **NVS Encryption:** Enable NVS Encryption via `menuconfig` to ensure Wi-Fi passwords stored on flash cannot be physically extracted by reading the flash chip.
 3. **Secure Boot v2:** Enable Secure Boot to ensure only firmware signed by your private ECDSA key can execute on the device, preventing malicious OTA bin injections even if the server is compromised.

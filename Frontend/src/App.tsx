@@ -4,7 +4,7 @@ import { Wifi, Shield, Info, CheckCircle2, Bluetooth } from 'lucide-react';
 import { ESPProvisioner, Security1 } from 'esp-ble-prov';
 
 const DEVICE_NAME_PREFIX = 'PROV_';
-const DEFAULT_ESP_PROV_SERVICE_UUID = '0000ffff-0000-1000-8000-00805f9b34fb';
+const ESP_PROV_SERVICE_UUID = '55cc035e-fb27-4f80-be02-3c60828b7451';
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
 
@@ -26,7 +26,7 @@ export default function App() {
   const provisionerRef = useRef(
     new ESPProvisioner({
       deviceNamePrefix: DEVICE_NAME_PREFIX,
-      serviceUUID: DEFAULT_ESP_PROV_SERVICE_UUID,
+      serviceUUID: ESP_PROV_SERVICE_UUID,
       security: new Security1(),
     }),
   );
@@ -57,12 +57,24 @@ export default function App() {
         throw new Error('Web Bluetooth is not available in this browser.');
       }
 
-      // Connect to any device broadcasting the configured device prefix
-      const connectedDevice = await provisionerRef.current.connect();
+      // Strict filter: must match both provisioning name prefix and provisioning service UUID.
+      const connectedDevice = await provisionerRef.current.connect({
+        filters: [
+          {
+            namePrefix: DEVICE_NAME_PREFIX,
+            services: [ESP_PROV_SERVICE_UUID],
+          },
+        ],
+      });
       setDevice({ name: connectedDevice.name || 'ESP32 Device' });
       setStep('pop');
     } catch (error: unknown) {
-      setErrorMsg(getErrorMessage(error) || 'Failed to connect. Ensure Bluetooth is on and device is ready.');
+      const message = getErrorMessage(error);
+      if (message.includes('No Services matching UUID')) {
+        setErrorMsg('Connected device does not expose the expected provisioning service. Ensure firmware UUID and frontend UUID match.');
+      } else {
+        setErrorMsg(message || 'Failed to connect. Ensure Bluetooth is on and device is ready.');
+      }
       console.error(error);
     } finally {
       setLoading(false);
@@ -186,7 +198,7 @@ export default function App() {
             <div className="space-y-5">
               <div className="text-center mb-6">
                 <h2 className="text-lg font-medium">Security Verification</h2>
-                <p className="text-neutral-500 text-sm mt-1">Enter the PIN printed on your device.</p>
+                <p className="text-neutral-500 text-sm mt-1">Enter the unique PoP/PIN assigned to this device.</p>
               </div>
 
               <div>
@@ -202,7 +214,7 @@ export default function App() {
                     value={pop}
                     onChange={(e) => setPop(e.target.value.toUpperCase())}
                     className="block w-full pl-10 pr-3 py-3 border border-neutral-300 dark:border-neutral-600 rounded-xl bg-neutral-50 dark:bg-neutral-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="e.g. HELLUM123"
+                    placeholder="Device-specific PoP"
                   />
                 </div>
               </div>

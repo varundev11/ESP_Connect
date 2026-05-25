@@ -22,6 +22,23 @@ static const char *TAG = "ESP_CORE";
 #define BUTTON_GPIO             GPIO_NUM_32  // Rarely conflicts, input/output capable
 #define FIRMWARE_VERSION        "1.0.0"
 #define OTA_CHECK_URL           "https://ota.hellum.dev/check"
+#define PROV_DEVICE_NAME_PREFIX "PROV_"
+#define PROV_POP_NAMESPACE      "prov"
+#define PROV_POP_KEY            "pop"
+#define PROV_POP_LEN            13
+#define PROV_SERVICE_NAME_LEN   20
+
+/*
+ * Product provisioning service UUID (canonical form):
+ * 55cc035e-fb27-4f80-be02-3c60828b7451
+ *
+ * ESP-IDF expects the UUID as raw bytes in LSB -> MSB order.
+ */
+static const uint8_t PROV_SERVICE_UUID[16] = {
+    0x51, 0x74, 0x8b, 0x82, 0x60, 0x3c, 0x02, 0xbe,
+    0x80, 0x4f, 0x27, 0xfb, 0x5e, 0x03, 0xcc, 0x55
+};
+static const char *PROV_SERVICE_UUID_STR = "55cc035e-fb27-4f80-be02-3c60828b7451";
 
 // --- Global State ---
 static bool is_provisioned = false;
@@ -37,6 +54,9 @@ extern const uint8_t server_cert_pem_end[]   asm("_binary_server_root_ca_pem_end
 // --- Prototypes ---
 void check_ota_task(void *pvParameter);
 void start_ble_provisioning(void);
+static esp_err_t get_or_create_pop(char *out_pop, size_t out_len);
+static void build_service_name(char *out_name, size_t out_len, const uint8_t mac[6]);
+static void generate_random_pop(char *out_pop, size_t out_len);
 
 // --- Button Fallback Logic ---
 static void button_timer_cb(TimerHandle_t xTimer) {
@@ -70,6 +90,65 @@ static void IRAM_ATTR button_isr_handler(void* arg) {
         }
         if (higherPriorityTaskWoken) portYIELD_FROM_ISR();
     }
+}
+
+static void build_service_name(char *out_name, size_t out_len, const uint8_t mac[6]) {
+    snprintf(
+        out_name,
+        out_len,
+        "%s%02X%02X%02X",
+        PROV_DEVICE_NAME_PREFIX,
+        mac[3],
+        mac[4],
+        mac[5]
+    );
+}
+
+static void generate_random_pop(char *out_pop, size_t out_len) {
+    static const char alphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const size_t pop_len = PROV_POP_LEN - 1;
+    const size_t alphabet_len = sizeof(alphabet) - 1;
+
+    if (out_len < PROV_POP_LEN) {
+        return;
+    }
+
+    for (size_t i = 0; i < pop_len; i++) {
+        out_pop[i] = alphabet[esp_random() % alphabet_len];
+    }
+    out_pop[pop_len] = '\0';
+}
+
+static esp_err_t get_or_create_pop(char *out_pop, size_t out_len) {
+    if (!out_pop || out_len < PROV_POP_LEN) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(PROV_POP_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    size_t required_len = out_len;
+    err = nvs_get_str(handle, PROV_POP_KEY, out_pop, &required_len);
+    if (err == ESP_OK) {
+        nvs_close(handle);
+        return ESP_OK;
+    }
+
+    if (err != ESP_ERR_NVS_NOT_FOUND) {
+        nvs_close(handle);
+        return err;
+    }
+
+    generate_random_pop(out_pop, out_len);
+    err = nvs_set_str(handle, PROV_POP_KEY, out_pop);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    return err;
 }
 
 // --- WiFi & Provisioning Events ---
@@ -132,17 +211,26 @@ void start_ble_provisioning(void) {
     };
     ESP_ERROR_CHECK(wifi_prov_mgr_init(config));
 
-    // Endpoint name: PROV_ESP32
-    char service_name[12];
     uint8_t mac[6];
-    esp_wifi_get_mac(WIFI_IF_STA, mac);
-    snprintf(service_name, sizeof(service_name), "PROV_%02X%02X", mac[4], mac[5]);
+    ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, mac));
 
-    // Security 1 uses Proof of Possession (PoP). For fully open BLE UI, use Security 0.
-    // We use Security 1 here. Provide the PoP via a sticker/QR code, or hardcode for dev.
+    static char service_name[PROV_SERVICE_NAME_LEN];
+    static char pop[PROV_POP_LEN];
+
+    build_service_name(service_name, sizeof(service_name), mac);
+
+    ESP_ERROR_CHECK(wifi_prov_scheme_ble_set_service_uuid((uint8_t *)PROV_SERVICE_UUID));
+
+    esp_err_t pop_err = get_or_create_pop(pop, sizeof(pop));
+    if (pop_err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to load persisted PoP (%s). Using fallback PoP from MAC suffix.", esp_err_to_name(pop_err));
+        snprintf(pop, sizeof(pop), "%02X%02X%02X%02X", mac[2], mac[3], mac[4], mac[5]);
+    }
+
+    ESP_LOGI(TAG, "Provisioning identity: name=%s, service_uuid=%s", service_name, PROV_SERVICE_UUID_STR);
+    ESP_LOGI(TAG, "Provisioning PoP: %s", pop);
+
     wifi_prov_security_t security = WIFI_PROV_SECURITY_1;
-    const char *pop = "HELLUM123";
-
     wifi_prov_mgr_start_provisioning(security, pop, service_name, NULL);
 }
 
