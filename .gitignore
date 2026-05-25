@@ -1,0 +1,69 @@
+# -----------------------------
+# OS / Editor / Local tooling
+# -----------------------------
+.DS_Store
+Thumbs.db
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local assistant/runtime metadata
+.agents/
+.codex/
+
+# -----------------------------
+# Environment files
+# -----------------------------
+.env
+.env.*
+!.env.example
+
+# -----------------------------
+# ESP-IDF / CMake build outputs
+# -----------------------------
+/build/
+
+# Local generated project config (keep defaults under version control)
+/sdkconfig
+/sdkconfig.old
+/sdkconfig.bak
+!/sdkconfig.defaults
+
+# Generic CMake/Ninja transient files (in case of out-of-tree builds)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+*.ninja
+.ninja_*
+
+# Flash/firmware artifacts
+*.bin
+*.elf
+*.map
+flasher_args.json
+flash_args
+flash_*.args
+
+# -----------------------------
+# Frontend (Vite/React)
+# -----------------------------
+/Frontend/node_modules/
+/Frontend/dist/
+/Frontend/dist-ssr/
+/Frontend/.vite/
+/Frontend/.cache/
+/Frontend/*.local
+/Frontend/.env
+/Frontend/.env.*
+!/Frontend/.env.example
+
+# Package manager / bundler logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
