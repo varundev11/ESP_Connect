@@ -21,7 +21,7 @@ static const char *TAG = "ESP_CORE";
 
 #define BUTTON_GPIO             GPIO_NUM_32  // Rarely conflicts, input/output capable
 #define FIRMWARE_VERSION        "1.0.0"
-#define OTA_CHECK_URL           "https://ota.hellum.dev/smart_switch/check"
+#define OTA_CHECK_URL           "https://otaapi.hellum.dev/smart_switch/check"
 #define PROV_DEVICE_NAME_PREFIX "PROV_"
 #define PROV_POP_NAMESPACE      "prov"
 #define PROV_POP_KEY            "pop"
