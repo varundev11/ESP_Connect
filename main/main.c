@@ -16,6 +16,9 @@
 #include "esp_https_ota.h"
 #include "esp_ota_ops.h"
 #include "cJSON.h"
+#include "device_state_manager.h"
+#include "homekit_bridge.h"
+#include "mqtt_bridge.h"
 
 static const char *TAG = "ESP_CORE";
 
@@ -46,6 +49,7 @@ static wifi_config_t backup_wifi_config;
 static bool has_backup_config = false;
 static uint8_t button_press_count = 0;
 static TimerHandle_t button_timer = NULL;
+static bool smart_home_started = false;
 
 // Provided by CMake/build system for HTTPS verification
 extern const uint8_t server_cert_pem_start[] asm("_binary_server_root_ca_pem_start");
@@ -57,6 +61,7 @@ void start_ble_provisioning(void);
 static esp_err_t get_or_create_pop(char *out_pop, size_t out_len);
 static void build_service_name(char *out_name, size_t out_len, const uint8_t mac[6]);
 static void generate_random_pop(char *out_pop, size_t out_len);
+static void start_smart_home_services_once(void);
 
 // --- Button Fallback Logic ---
 static void button_timer_cb(TimerHandle_t xTimer) {
@@ -151,6 +156,27 @@ static esp_err_t get_or_create_pop(char *out_pop, size_t out_len) {
     return err;
 }
 
+static void start_smart_home_services_once(void) {
+    if (smart_home_started) {
+        return;
+    }
+
+    esp_err_t err = homekit_bridge_start();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start HomeKit bridge: %s", esp_err_to_name(err));
+        return;
+    }
+
+    err = mqtt_bridge_start();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start MQTT bridge: %s", esp_err_to_name(err));
+        return;
+    }
+
+    smart_home_started = true;
+    ESP_LOGI(TAG, "Smart home services started");
+}
+
 // --- WiFi & Provisioning Events ---
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     if (event_base == WIFI_PROV_EVENT) {
@@ -201,6 +227,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
 
         // Start OTA Check
         xTaskCreate(&check_ota_task, "ota_task", 8192, NULL, 5, NULL);
+
+        // Start HomeKit and MQTT only after provisioning has completed and STA has IP.
+        start_smart_home_services_once();
     }
 }
 
@@ -343,6 +372,9 @@ void app_main(void) {
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    // Keep active-low relays off as early as possible, then arm physical switch inputs.
+    ESP_ERROR_CHECK(device_state_manager_init());
 
     // 2. Setup Netif & Event Loop
     ESP_ERROR_CHECK(esp_netif_init());
